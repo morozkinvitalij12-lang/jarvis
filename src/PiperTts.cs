@@ -11,13 +11,15 @@ internal sealed class PiperTts : ITts
     private readonly HashSet<char> _phonemes;
     private readonly Speaker _speaker = new();
     private readonly double _speed;
+    private readonly VoiceFx _fx;
     private readonly Dictionary<string, short[]> _cache = new(StringComparer.Ordinal);
 
     public string Name { get; }
     public int SampleRate { get; }
 
-    public PiperTts(string voiceDir, string espeakData, double speed, int threads = 2)
+    public PiperTts(string voiceDir, string espeakData, double speed, int threads, VoiceFx fx)
     {
+        _fx = fx;
         Name = Path.GetFileName(voiceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var model = Path.Combine(voiceDir, Name + ".onnx");
         var meta = model + ".json";
@@ -136,6 +138,7 @@ internal sealed class PiperTts : ITts
                 audio.Dispose();
             }
 
+            pcm = _fx.Apply(pcm, SampleRate);
             if (pcm.Length > 0 && _cache.Count < 64) _cache[text] = pcm;
             return pcm;
         }

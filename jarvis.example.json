@@ -8,6 +8,7 @@
   "piperVoice": "ruslan",
   "piperSpeed": 1,
   "piperThreads": 2,
+  "voiceFx": "jarvis",
   "piperVoicesDir": "models\\piper\\voices",
   "espeakDataDir": "models\\piper\\espeak-ng-data",
   "modelDir": "models\\vosk-model-small-ru-0.22",

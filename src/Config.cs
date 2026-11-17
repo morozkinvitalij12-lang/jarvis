@@ -21,6 +21,8 @@ public sealed class Config
     [JsonPropertyName("piperVoice")] public string PiperVoice { get; set; } = "ruslan";
     [JsonPropertyName("piperSpeed")] public double PiperSpeed { get; set; } = 1.0;
     [JsonPropertyName("piperThreads")] public int PiperThreads { get; set; } = 2;
+    /// <summary>Обработка тона Piper: «jarvis» — бортовой ИИ, «off» — как из модели.</summary>
+    [JsonPropertyName("voiceFx")] public string VoiceFx { get; set; } = "jarvis";
     [JsonPropertyName("piperVoicesDir")] public string PiperVoicesDir { get; set; } = Path.Combine("models", "piper", "voices");
     [JsonPropertyName("espeakDataDir")] public string EspeakDataDir { get; set; } = Path.Combine("models", "piper", "espeak-ng-data");
     [JsonPropertyName("modelDir")] public string ModelDir { get; set; } = Path.Combine("models", "vosk-model-small-ru-0.22");

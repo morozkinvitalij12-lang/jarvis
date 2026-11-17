@@ -61,6 +61,19 @@ internal static class Settings
             {
                 Tile = "Т",
                 TileColor = Hud.CyanDeep,
+                Title = "Тембр",
+                Subtitle = "обработка голоса под бортовой ИИ · Enter — переключить, нужна перезагрузка",
+                Hint = VoiceFx.For(cfg.VoiceFx).Name,
+                Act = () =>
+                {
+                    cfg.VoiceFx = VoiceFx.IsOn(cfg.VoiceFx) ? "off" : "jarvis";
+                    cfg.Save();
+                }
+            },
+            new()
+            {
+                Tile = "Т",
+                TileColor = Hud.CyanDeep,
                 Title = "Движок речи",
                 Subtitle = "нейросеть или системный SAPI · Enter — переключить",
                 Hint = cfg.NeuralTts ? "piper" : "sapi",
@@ -231,7 +244,8 @@ internal static class Settings
                     {
                         try
                         {
-                            using var tts = new PiperTts(Path.Combine(cfg.PiperVoicesPath, name), cfg.EspeakDataPath, cfg.PiperSpeed, cfg.PiperThreads);
+                            using var tts = new PiperTts(Path.Combine(cfg.PiperVoicesPath, name), cfg.EspeakDataPath, cfg.PiperSpeed,
+                                cfg.PiperThreads, VoiceFx.For(cfg.VoiceFx));
                             Directory.CreateDirectory(cfg.DictationDir);
                             Wav.Write(Path.Combine(cfg.DictationDir, $"голос-{name}.wav"), tts.Render(cfg.Greeting), tts.SampleRate);
                             Console.WriteLine($"[голос] {name} → голос-{name}.wav");

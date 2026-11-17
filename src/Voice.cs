@@ -37,7 +37,8 @@ internal sealed class Voice : IDisposable
             var voices = PiperTts.InstalledVoices(cfg.PiperVoicesPath).ToList();
             if (voices.Count == 0) throw new DirectoryNotFoundException("нет голосов в " + cfg.PiperVoicesPath);
             var chosen = voices.FirstOrDefault(v => v.Contains(cfg.PiperVoice, StringComparison.OrdinalIgnoreCase)) ?? voices[0];
-            return new PiperTts(Path.Combine(cfg.PiperVoicesPath, chosen), cfg.EspeakDataPath, cfg.PiperSpeed, cfg.PiperThreads);
+            return new PiperTts(Path.Combine(cfg.PiperVoicesPath, chosen), cfg.EspeakDataPath, cfg.PiperSpeed,
+                cfg.PiperThreads, VoiceFx.For(cfg.VoiceFx));
         }
         catch (Exception e)
         {

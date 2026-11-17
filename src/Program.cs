@@ -503,7 +503,8 @@ internal static class Program
             try
             {
                 var watch = Stopwatch.StartNew();
-                using var tts = new PiperTts(Path.Combine(cfg.PiperVoicesPath, name), cfg.EspeakDataPath, cfg.PiperSpeed, cfg.PiperThreads);
+                using var tts = new PiperTts(Path.Combine(cfg.PiperVoicesPath, name), cfg.EspeakDataPath, cfg.PiperSpeed,
+                    cfg.PiperThreads, VoiceFx.For(cfg.VoiceFx));
                 var pcm = tts.Render(text);
                 var seconds = pcm.Length / (double)tts.SampleRate;
                 var outPath = Path.Combine(cfg.DictationDir, $"голос-{name}.wav");
