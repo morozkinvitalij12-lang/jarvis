@@ -27,14 +27,17 @@ internal sealed class VoiceFx
     public bool Enabled { get; }
     public string Name { get; }
 
-    public static VoiceFx For(string name) => name.Trim().ToLowerInvariant() switch
-    {
-        "off" or "выкл" or "нет" or "none" => OffPreset,
-        _ => JarvisPreset,
-    };
+    /// <summary>Пустое или отсутствующее значение означает «как задумано», а не аварию: строка
+    /// приходит из чужого jarvis.json, где её мог написать человек от руки.</summary>
+    public static VoiceFx For(string? name) =>
+        string.IsNullOrWhiteSpace(name) ? JarvisPreset : name.Trim().ToLowerInvariant() switch
+        {
+            "off" or "выкл" or "нет" or "none" => OffPreset,
+            _ => JarvisPreset,
+        };
 
     /// <summary>Нужен вкладке настроек: показать, включена ли обработка, не создавая движок.</summary>
-    public static bool IsOn(string name) => For(name).Enabled;
+    public static bool IsOn(string? name) => For(name).Enabled;
 
     /// <summary>Множитель тона: меньше единицы — голос ниже. Растяжка, опускающая тон, ровно во
     /// столько же удлиняет фразу, и речь сама становится размеренной. Отдельно подгонять скорость
@@ -46,7 +49,7 @@ internal sealed class VoiceFx
         if (!Enabled || pcm.Length < sampleRate / 8) return pcm;
 
         var target = Rms(pcm);
-        var work = ToDoubles(Stretch(pcm, Pitch));
+        var work = Stretch(pcm, Pitch);
         Equalize(work, sampleRate, _warmth, _glass);
         if (_wet > 0) Tail(work, sampleRate, _wet);
         Level(work, target);
@@ -55,18 +58,19 @@ internal sealed class VoiceFx
 
     /// <summary>Кубической интерполяцией читаем вход с шагом меньше единицы: отсчётов становится
     /// больше, речь растягивается и вместе с ней падает тон. Форманты съезжают следом — из-за
-    /// этого голос перестаёт звучать как живой человек, что нам и нужно.</summary>
-    private static short[] Stretch(short[] input, double pitch)
+    /// этого голос перестаёт звучать как живой человек, что нам и нужно. Делим сразу здесь:
+    /// отдельного короткого массива по дороге больше нет, а он самый крупный.</summary>
+    private static double[] Stretch(short[] input, double pitch)
     {
         var length = (int)(input.Length / pitch);
-        var output = new short[length];
+        var output = new double[length];
         for (var i = 0; i < length; i++)
         {
             var at = i * pitch;
             var whole = (int)Math.Floor(at);
             output[i] = (short)Math.Clamp(
                 CatmullRom(At(input, whole - 1), At(input, whole), At(input, whole + 1), At(input, whole + 2), at - whole),
-                -32768.0, 32767.0);
+                -32768.0, 32767.0) / 32768.0;
         }
 
         return output;
@@ -77,8 +81,6 @@ internal sealed class VoiceFx
 
     private static double CatmullRom(double a, double b, double c, double d, double t) =>
         0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
-
-    private static double[] ToDoubles(short[] pcm) => Array.ConvertAll(pcm, s => s / 32768.0);
 
     /// <summary>Плавный ограничитель: делим на тот же множитель, что и внутри, чтобы тихий сигнал
     /// шёл без усиления, а вершины выше 0,8 мягко поджимались.</summary>
@@ -120,51 +122,55 @@ internal sealed class VoiceFx
     /// подъём, и её отклик проверяется числом на тестовой синусоиде.</summary>
     private static void Equalize(double[] work, int rate, double warmth, double glass)
     {
-        Shelf(work, rate, 150, warmth, low: true);
-        Shelf(work, rate, 550, -3.0, low: false);
-        Shelf(work, rate, 2200, glass, low: false);
-        Dull(work, rate, 8000, -8);
-        Array.Copy(Highpass(work, rate, 65), work, work.Length);
+        // Одна рабочая копия на весь тембр: раньше каждый из пяти фильтров создавал свой массив
+        // размером с фразу, и это был самый крупный разовый мусор в приложении.
+        var band = new double[work.Length];
+        Shelf(work, band, rate, 150, warmth, low: true);
+        Shelf(work, band, rate, 550, -3.0, low: false);
+        Shelf(work, band, rate, 2200, glass, low: false);
+        Dull(work, band, rate, 8000, -8);
+        Highpass(work, rate, 65);
     }
 
-    private static void Shelf(double[] work, int rate, double hz, double db, bool low)
+    private static void Shelf(double[] work, double[] band, int rate, double hz, double db, bool low)
     {
         var factor = Gain(db) - 1;
-        var below = Lowpass(work, rate, hz);
+        Lowpass(work, band, rate, hz);
         for (var i = 0; i < work.Length; i++)
-            work[i] += factor * (low ? below[i] : work[i] - below[i]);
+            work[i] += factor * (low ? band[i] : work[i] - band[i]);
     }
 
-    private static void Dull(double[] work, int rate, double hz, double db)
+    private static void Dull(double[] work, double[] band, int rate, double hz, double db)
     {
-        var low = Lowpass(work, rate, hz);
+        Lowpass(work, band, rate, hz);
         var keep = Gain(db);
-        for (var i = 0; i < work.Length; i++) work[i] = low[i] + (work[i] - low[i]) * keep;
+        for (var i = 0; i < work.Length; i++) work[i] = band[i] + (work[i] - band[i]) * keep;
     }
 
     private static double Gain(double db) => Math.Pow(10, db / 20.0);
 
-    private static double[] Lowpass(double[] input, int rate, double hz)
+    private static void Lowpass(double[] input, double[] output, int rate, double hz)
     {
         var w = 2 * Math.PI * Math.Min(hz, rate / 2.5) / rate;
         var cos = Math.Cos(w);
         var alpha = Math.Sin(w) / Math.Sqrt(2);
         var a0 = 1 + alpha;
-        return Filter(input, (1 - cos) / 2 / a0, (1 - cos) / a0, (1 - cos) / 2 / a0, -2 * cos / a0, (1 - alpha) / a0);
+        Filter(input, output, (1 - cos) / 2 / a0, (1 - cos) / a0, (1 - cos) / 2 / a0, -2 * cos / a0, (1 - alpha) / a0);
     }
 
-    private static double[] Highpass(double[] input, int rate, double hz)
+    /// <summary>Пишет в тот же массив, из которого читает: отсчёт снимается до записи, а более
+    /// поздние ещё не тронуты, поэтому результат ровно тот же, что у фильтра с отдельным выходом.</summary>
+    private static void Highpass(double[] work, int rate, double hz)
     {
-        var w = 2 * Math.PI * hz / rate;
+        var w = 2 * Math.PI * Math.Min(hz, rate / 2.5) / rate;
         var cos = Math.Cos(w);
         var alpha = Math.Sin(w) / Math.Sqrt(2);
         var a0 = 1 + alpha;
-        return Filter(input, (1 + cos) / 2 / a0, -(1 + cos) / a0, (1 + cos) / 2 / a0, -2 * cos / a0, (1 - alpha) / a0);
+        Filter(work, work, (1 + cos) / 2 / a0, -(1 + cos) / a0, (1 + cos) / 2 / a0, -2 * cos / a0, (1 - alpha) / a0);
     }
 
-    private static double[] Filter(double[] input, double b0, double b1, double b2, double a1, double a2)
+    private static void Filter(double[] input, double[] output, double b0, double b1, double b2, double a1, double a2)
     {
-        var output = new double[input.Length];
         double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
         for (var i = 0; i < input.Length; i++)
         {
@@ -176,18 +182,17 @@ internal sealed class VoiceFx
             y1 = y;
             output[i] = y;
         }
-
-        return output;
     }
+
+    private static readonly double[] Combs = { 0.0371, 0.0411, 0.0437, 0.0479 };
 
     /// <summary>Далёкие отражения Шредера: четыре гаснущие гребёнки и два фазовращателя. Задержки
     /// взяты дольше 35 мс именно потому, что короткие гребёнки работают как гребенчатый фильтр:
     /// они подмазывают взрывные согласные, и из-за этого «р» начинает слышиться как «л».</summary>
     private static void Tail(double[] work, int rate, double mix)
     {
-        var combs = new[] { 0.0371, 0.0411, 0.0437, 0.0479 };
         var wet = new double[work.Length];
-        foreach (var seconds in combs)
+        foreach (var seconds in Combs)
         {
             var delay = Math.Max(2, (int)(seconds * rate));
             var buffer = new double[delay];
@@ -203,7 +208,7 @@ internal sealed class VoiceFx
             }
         }
 
-        for (var i = 0; i < work.Length; i++) wet[i] /= combs.Length;
+        for (var i = 0; i < work.Length; i++) wet[i] /= Combs.Length;
         Allpass(wet, rate, 0.005, 0.5);
         Allpass(wet, rate, 0.0017, 0.5);
 

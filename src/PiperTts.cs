@@ -13,6 +13,11 @@ internal sealed class PiperTts : ITts
     private readonly double _speed;
     private readonly VoiceFx _fx;
     private readonly Dictionary<string, short[]> _cache = new(StringComparer.Ordinal);
+    private int _cacheSamples;
+
+    /// <summary>8,4 млн отсчётов = 16 МиБ готового звука, около шести минут речи. Раньше лимит
+    /// считался в записях, и шестьдесят фраз по полминуты стоили до 84 МиБ.</summary>
+    private const int CacheSampleLimit = 8_388_608;
 
     public string Name { get; }
     public int SampleRate { get; }
@@ -139,9 +144,25 @@ internal sealed class PiperTts : ITts
             }
 
             pcm = _fx.Apply(pcm, SampleRate);
-            if (pcm.Length > 0 && _cache.Count < 64) _cache[text] = pcm;
+            Store(text, pcm);
             return pcm;
         }
+    }
+
+    /// <summary>Кэш под общим замком Render, поэтому вытеснение самое простое: освобождаем место,
+    /// выбрасывая самые старые фразы, а новую не кладём, если она одна больше всего лимита.</summary>
+    private void Store(string text, short[] pcm)
+    {
+        if (pcm.Length == 0 || pcm.Length > CacheSampleLimit) return;
+        while (_cache.Count > 0 && _cacheSamples + pcm.Length > CacheSampleLimit)
+        {
+            var oldest = _cache.Keys.First();
+            _cacheSamples -= _cache[oldest].Length;
+            _cache.Remove(oldest);
+        }
+
+        _cache[text] = pcm;
+        _cacheSamples += pcm.Length;
     }
 
     public void Speak(string text, float gain)

@@ -72,7 +72,7 @@ internal static class Settings
             },
             new()
             {
-                Tile = "Т",
+                Tile = "Д",
                 TileColor = Hud.CyanDeep,
                 Title = "Движок речи",
                 Subtitle = "нейросеть или системный SAPI · Enter — переключить",
