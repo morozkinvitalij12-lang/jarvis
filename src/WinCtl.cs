@@ -174,21 +174,22 @@ internal static class WinCtl
         if (sent != keys.Length) Log.Line($"вставка: SendInput принял {sent} из {keys.Length} нажатий, ошибка {Marshal.GetLastWin32Error()}");
     }
 
-    /// <summary>INPUT для клавиатуры. Поле union занимает мышь (она крупнее), поэтому структура
-    /// дополнена пустыми байтами: без них SendInput отбраковывает размер и не вставляет ничего.</summary>
+    /// <summary>INPUT с KEYBDINPUT внутри. Смещения важны: wVk и wScan — по два байта, и если
+    /// описать их как uint, скан-код съедает поле dwFlags. SendInput тогда принимает нажатия
+    /// (размер структуры верный), но в флаги попадает мусор с битом KEYUP, и окно ничего не видит.</summary>
     [StructLayout(LayoutKind.Sequential)]
     private struct Key
     {
-        public uint Type;
-        public uint Padding;
-        public uint VirtualKey;
-        public uint Scan;
-        public uint Flags;
-        public uint Time;
-        public nint ExtraInfo;
-        private readonly ulong unionTail;
+        public uint Type;          // 0
+        public uint Padding;       // 4
+        public ushort VirtualKey;  // 8
+        public ushort Scan;        // 10
+        public uint Flags;         // 12
+        public uint Time;          // 16
+        public nint ExtraInfo;     // 24
+        private readonly ulong unionTail;   // 32 — мышиная часть union крупнее клавиатурной
 
-        public Key(uint virtualKey, uint scan, uint flags) : this()
+        public Key(ushort virtualKey, ushort scan, uint flags) : this()
         {
             Type = InputKeyboard;
             VirtualKey = virtualKey;
@@ -199,8 +200,8 @@ internal static class WinCtl
 
     private const uint InputKeyboard = 1;
     private const uint Keyup = 0x0002;
-    private const uint VkControl = 0x11;
-    private const uint VkV = 0x56;
+    private const ushort VkControl = 0x11;
+    private const ushort VkV = 0x56;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, Key[] inputs, int size);

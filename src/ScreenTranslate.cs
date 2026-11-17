@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -78,7 +79,9 @@ internal static class ScreenTranslate
         }
     }
 
-    private const string YandexUrl = "https://translate.yandex.ru/";
+    // Раздел «перевод по фото»: на главной странице Переводчика вставка картинки не принимается,
+    // кадр нужен именно здесь.
+    private const string YandexUrl = "https://translate.yandex.ru/ocr";
 
     /// <summary>Кадр отдаётся Яндекс Переводчику: он сам распознаёт и переводит картинки, поэтому
     /// здесь только снимок, буфер обмена, открытая страница и вставка в неё.</summary>
@@ -122,9 +125,17 @@ internal static class ScreenTranslate
         for (var attempt = 0; attempt < 40; attempt++)
         {
             Thread.Sleep(250);
-            if (WinCtl.Foreground() is not { } window) continue;
-            var title = window.Title.ToLowerInvariant();
-            if (!title.Contains("яндекс") && !title.Contains("перевод") && !title.Contains("translate")) continue;
+            if (!IsYandexFront()) continue;
+
+            // Заголовок вкладка получает раньше, чем страница успевает принять вставку, но
+            // ждать молча нельзя: за это время фокус может уйти. Поэтому ждём короткими
+            // шагами и перед самым нажатием ещё раз сверяемся, что вкладка осталась спереди.
+            for (var settle = 0; settle < 6; settle++)
+            {
+                Thread.Sleep(250);
+                if (!IsYandexFront()) return false;
+            }
+
             WinCtl.PasteToForeground();
             return true;
         }
@@ -132,16 +143,40 @@ internal static class ScreenTranslate
         return false;
     }
 
-    /// <summary>Буфер обмена требует STA-поток: поток ассистента — MTA, и оттуда он не отдаётся.</summary>
+    private static bool IsYandexFront()
+    {
+        if (WinCtl.Foreground() is not { } window) return false;
+        var title = window.Title.ToLowerInvariant();
+        return title.Contains("яндекс") || title.Contains("перевод") || title.Contains("translate");
+    }
+
+    /// <summary>Буфер обмена требует STA-поток: поток ассистента — MTA, и оттуда он не отдаётся.
+    /// Кадр кладётся списком файлов: страница «перевода по фото» принимает перетаснутый файл,
+    /// а растр из буфера она не видит. PNG полноэкранного кадра весит под 5 МБ, а это ровно
+    /// потолок страницы, поэтому кадр пишется JPEG — с ним влезает даже большой экран.</summary>
     private static void CopyToClipboard(Bitmap photo)
     {
+        var path = Path.Combine(Path.GetTempPath(), "jarvis-screen.jpg");
+        var encoder = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.MimeType == "image/jpeg");
+        if (encoder is null)
+        {
+            photo.Save(path, ImageFormat.Jpeg);
+        }
+        else
+        {
+            using var parameters = new EncoderParameters(1);
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 92L);
+            photo.Save(path, encoder, parameters);
+        }
+        var files = new StringCollection { path };
+
         Exception? failure = null;
         using var done = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
             try
             {
-                WinForms.Clipboard.SetImage(photo);
+                WinForms.Clipboard.SetFileDropList(files);
             }
             catch (Exception e)
             {
