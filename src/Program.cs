@@ -95,6 +95,10 @@ internal static class Program
                 foreach (var scenario in cfg.Scenarios)
                     Console.WriteLine($"{scenario.Name}: {string.Join(" → ", scenario.Steps)}");
                 return 0;
+            case "--sites":
+                foreach (var site in Sites.All(cfg.Sites))
+                    Console.WriteLine($"{site.Key} → {site.Value}");
+                return 0;
             case "--brain":
                 return BrainMode(cfg, args);
             case "--volume":
@@ -623,11 +627,12 @@ internal static class Program
             Jarvis.exe --ocr файл.png [перевод.png] распознать картинку, вторым адресом — перевести и вписать
             Jarvis.exe --calc "пример"      калькулятор, числа можно словами
             Jarvis.exe --scenario           список сценариев из jarvis.json
+            Jarvis.exe --sites              сайты, которые помощник открывает по имени
             Jarvis.exe --brain [вопрос]     проверка локальной нейросети (Ollama): адрес, модель, ответ
             Jarvis.exe --selftest           проверка модели, голоса и цепочки TTS→STT без микрофона
             Jarvis.exe --plan ["фраза" ...] сухой прогон маршрутизации команд (без действий и звука)
 
-            Команды помощника: открой/запусти, закрой, найди, следующий трек, пауза, стоп музыка,
+            Команды помощника: открой/запусти, открой сайт X, закрой, найди, следующий трек, пауза, стоп музыка,
             тише/громче, громкость 40, звук отключи, что открыто, сверни, разверни, полный экран,
             перемотай, диктуй, сохраняю, который час, какое сегодня число, погода [в городе],
             курс доллара, переведи X на английский, перевод экрана, посчитай, сценарий утро, повтори,

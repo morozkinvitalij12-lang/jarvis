@@ -429,9 +429,16 @@ internal sealed class Commands(Voice voice, Config cfg)
         _ => "воскресенье",
     };
 
+    private static readonly string[] SiteWords = ["сайт", "сайта", "сайту", "сайте", "страница", "страницу", "странице"];
+
     private string Open(string target)
     {
-        var clean = target.Replace(" сайт", "").Replace(" страницу", "").Trim();
+        var spokenSite = SiteWords.Any(w => target.Contains(w, StringComparison.Ordinal));
+        // «сайт» и «страница» — слова-указатели, а не имя: «открой сайт авито» и «открой авито»
+        // должны дать одно и то же.
+        var clean = string.Join(' ', target.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(word => !SiteWords.Contains(word, StringComparer.Ordinal))).Trim();
+        if (clean.Length == 0) return Miss("Что открыть?");
         if (LooksLikeAddress(clean))
         {
             try
@@ -445,12 +452,33 @@ internal sealed class Commands(Voice voice, Config cfg)
             }
         }
 
+        // «Открой сайт X» не оставляет выбора: имя ищется только среди сайтов, иначе
+        // «открой сайт стим» запустил бы программу.
+        if (spokenSite) return Sites.Resolve(clean, cfg.Sites) is { } forced ? OpenSite(forced, clean) : Miss($"Сайта «{clean}» не знаю.");
+
         foreach (var alias in Apps.Keys.OrderByDescending(k => k.Length))
             if (clean.Contains(alias, StringComparison.Ordinal) && TryOpen(Apps[alias], out var named))
                 return Reply($"Открываю {named}.");
 
+        // Сайт раньше случайной команды: «авито» — не программа, и попытка запустить её
+        // только время тратит, а адрес по такому имени помощник знает.
+        if (Sites.Resolve(clean, cfg.Sites) is { } site) return OpenSite(site, clean);
+
         if (TryOpen([clean], out var found)) return Reply($"Открываю {found}.");
         return Miss($"Не нашёл «{clean}».");
+    }
+
+    private string OpenSite(string url, string spoken)
+    {
+        try
+        {
+            WinCtl.OpenUrl(url);
+            return Reply($"Открываю {spoken}.");
+        }
+        catch (Exception e)
+        {
+            return Reply($"Не получилось открыть сайт. {e.Message}");
+        }
     }
 
     /// <summary>Кандидаты пробуются дважды: как команда Windows и как имя из установленного

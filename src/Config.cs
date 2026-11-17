@@ -52,6 +52,9 @@ public sealed class Config
         new() { Name = "ночь", Steps = ["стоп музыка", "закрой все окна", "режим ожидания"] },
     ];
 
+    /// <summary>Свои сайты: «открой <имя>» ведёт сюда, и только потом — во встроенный список.</summary>
+    [JsonPropertyName("sites")] public Dictionary<string, string> Sites { get; set; } = [];
+
     public static string Root => AppContext.BaseDirectory;
     [JsonIgnore] public string ModelPath => Path.IsPathRooted(ModelDir) ? ModelDir : Path.Combine(Root, ModelDir);
     [JsonIgnore] public string ConfigPath => Path.Combine(Root, "jarvis.json");
