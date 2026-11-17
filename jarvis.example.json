@@ -1,0 +1,66 @@
+{
+  "wakeWords": [
+    "джарвис",
+    "джарвиса",
+    "jarvis"
+  ],
+  "tts": "piper",
+  "piperVoice": "ruslan",
+  "piperSpeed": 1,
+  "piperThreads": 2,
+  "piperVoicesDir": "models\\piper\\voices",
+  "espeakDataDir": "models\\piper\\espeak-ng-data",
+  "modelDir": "models\\vosk-model-small-ru-0.22",
+  "neuralAsr": true,
+  "neuralAsrDir": "models\\sherpa-nemo-giga-am-v3",
+  "neuralAsrThreads": 2,
+  "sampleRate": 16000,
+  "microphone": -1,
+  "overlay": true,
+  "voiceCulture": "ru-RU",
+  "speechRate": 1,
+  "volume": 100,
+  "commandTimeoutSeconds": 12,
+  "partialTimeoutSeconds": 2,
+  "dictationDir": "",
+  "greeting": "Системы запущены. Слушаю вас.",
+  "weatherCity": "Москва",
+  "smartAnswers": false,
+  "ollamaUrl": "http://127.0.0.1:11434",
+  "ollamaModel": "qwen3.5:4b",
+  "brainTimeoutSeconds": 120,
+  "scenarios": [
+    {
+      "name": "утро",
+      "steps": [
+        "который час",
+        "погода",
+        "курсы валют",
+        "открой браузер"
+      ]
+    },
+    {
+      "name": "работа",
+      "steps": [
+        "открой браузер",
+        "открой код",
+        "громкость 20"
+      ]
+    },
+    {
+      "name": "кино",
+      "steps": [
+        "громкость 70",
+        "разверни на весь экран"
+      ]
+    },
+    {
+      "name": "ночь",
+      "steps": [
+        "стоп музыка",
+        "закрой все окна",
+        "режим ожидания"
+      ]
+    }
+  ]
+}
