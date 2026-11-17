@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -5,11 +6,14 @@ namespace Jarvis;
 
 public sealed class Config
 {
+    // Без этой кодировки JsonSerializer пишет кириллицу как \uXXXX, и jarvis.json становится
+    // нечитаемым для человека, который правит в нём сценарии.
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
+        AllowTrailingCommas = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     [JsonPropertyName("wakeWords")] public string[] WakeWords { get; set; } = ["джарвис", "джарвиса", "jarvis"];

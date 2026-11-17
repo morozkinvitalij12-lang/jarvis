@@ -36,6 +36,11 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
     private readonly Grid _settings = new();
     private readonly Grid _scenarios = new();
     private readonly StackPanel _scenarioRows = new();
+    private readonly Border _scenarioEditor = new() { Visibility = Visibility.Collapsed };
+    private readonly TextBox _scenarioName = new();
+    private readonly TextBox _scenarioSteps = new();
+    private readonly TextBlock _scenarioCaption = new();
+    private readonly TextBlock _scenarioHint = new();
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(400) };
     private readonly List<string> _voices = [];
 
@@ -52,6 +57,7 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
     private int _view;
     private int _selected;
     private int _scenarioSelected;
+    private int _editing = -2;
     private List<Settings.Row> _state = [];
     private string _signature = string.Empty;
 
@@ -218,6 +224,13 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         {
             if (e.Key == Key.Escape)
             {
+                if (_scenarioEditor.Visibility == Visibility.Visible)
+                {
+                    CloseEditor();
+                    e.Handled = true;
+                    return;
+                }
+
                 _window.Hide();
                 e.Handled = true;
                 return;
@@ -247,6 +260,19 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
             }
 
             if (_scenarios.Visibility != Visibility.Visible) return;
+
+            // Открытая правка забирает клавиши себе: список не должен переходить и запускать
+            // сценарий, пока в полях печатают команды.
+            if (_scenarioEditor.Visibility == Visibility.Visible)
+            {
+                if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+                {
+                    SaveEditor();
+                    e.Handled = true;
+                }
+                return;
+            }
+
             var count = cfg.Scenarios.Length;
             switch (e.Key)
             {
@@ -503,18 +529,39 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         RenderRows();
     }
 
-    /// <summary>Список сценариев из jarvis.json: строка запускает его той же командой,
-    /// что и голос, поэтому поведение сценария проверено обоими путями.</summary>
+    /// <summary>Список сценариев и правка своих: строка запускает сценарий той же командой,
+    /// что и голос, а набор сохраняется в jarvis.json — его же читает помощник вслух.</summary>
     private void BuildScenarios()
     {
         _scenarios.Margin = new Thickness(18, 14, 18, 10);
         _scenarios.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _scenarios.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _scenarios.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var note = Hud.Text("сценарий — цепочка обычных команд. запуск щелчком или вслух: «сценарий утро». правится в jarvis.json", Hud.Dim, 11.5);
+        var top = new Grid();
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var note = Hud.Text("сценарий — цепочка обычных команд. запуск щелчком или вслух: «сценарий утро»", Hud.Dim, 11.5);
         note.TextWrapping = TextWrapping.Wrap;
-        Grid.SetRow(note, 0);
-        _scenarios.Children.Add(note);
+        note.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(note, 0);
+        top.Children.Add(note);
+
+        var tools = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        tools.Children.Add(Link("+ НОВЫЙ", () => OpenEditor(-1)));
+        tools.Children.Add(Link("✎ ПРАВИТЬ", () => OpenEditor(_scenarioSelected)));
+        tools.Children.Add(Link("✕ УДАЛИТЬ", () => DeleteScenario(_scenarioSelected)));
+        Grid.SetColumn(tools, 1);
+        top.Children.Add(tools);
+
+        Grid.SetRow(top, 0);
+        _scenarios.Children.Add(top);
 
         var scroll = new ScrollViewer
         {
@@ -525,7 +572,163 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         Grid.SetRow(scroll, 1);
         _scenarios.Children.Add(scroll);
 
+        Grid.SetRow(ScenarioEditor(), 2);
+        _scenarios.Children.Add(_scenarioEditor);
+
         RenderScenarios();
+    }
+
+    private UIElement ScenarioEditor()
+    {
+        var body = new StackPanel { Margin = new Thickness(12, 10, 12, 12) };
+
+        _scenarioCaption.Foreground = Hud.Brush(Hud.Cyan);
+        _scenarioCaption.FontSize = 12;
+        _scenarioCaption.Margin = new Thickness(0, 0, 0, 8);
+        body.Children.Add(_scenarioCaption);
+
+        Field(_scenarioName, 32);
+        _scenarioName.Margin = new Thickness(0, 0, 0, 8);
+        body.Children.Add(_scenarioName);
+
+        _scenarioSteps.AcceptsReturn = true;
+        _scenarioSteps.TextWrapping = TextWrapping.Wrap;
+        _scenarioSteps.MinHeight = 74;
+        _scenarioSteps.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        Field(_scenarioSteps, 74);
+        body.Children.Add(_scenarioSteps);
+
+        _scenarioHint.Foreground = Hud.Brush(Hud.Amber);
+        _scenarioHint.FontSize = 11.5;
+        _scenarioHint.Margin = new Thickness(0, 8, 0, 0);
+        _scenarioHint.TextWrapping = TextWrapping.Wrap;
+        body.Children.Add(_scenarioHint);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        actions.Children.Add(Link("СОХРАНИТЬ", SaveEditor));
+        actions.Children.Add(Link("ОТМЕНА", CloseEditor));
+        body.Children.Add(actions);
+
+        var keys = Hud.Text("каждая строка — обычная команда, та же, что говорят вслух · Ctrl+Enter сохранить, Esc закрыть", Hud.Dim, 11);
+        keys.Margin = new Thickness(0, 10, 0, 0);
+        keys.TextWrapping = TextWrapping.Wrap;
+        body.Children.Add(keys);
+
+        _scenarioEditor.Margin = new Thickness(0, 12, 0, 0);
+        _scenarioEditor.BorderBrush = new SolidColorBrush(Hud.Hairline);
+        _scenarioEditor.BorderThickness = new Thickness(1);
+        _scenarioEditor.Background = new SolidColorBrush(Color.FromArgb(150, Hud.Back.R, Hud.Back.G, Hud.Back.B));
+        _scenarioEditor.Child = body;
+        return _scenarioEditor;
+    }
+
+    /// <summary>Поле ввода в той же сетке, что журнал и строка команд.</summary>
+    private static void Field(TextBox box, double height)
+    {
+        box.Background = new SolidColorBrush(Color.FromArgb(120, Hud.Back.R, Hud.Back.G, Hud.Back.B));
+        box.Foreground = Hud.Brush(Hud.Ink);
+        box.CaretBrush = Hud.Brush(Hud.Cyan);
+        box.BorderBrush = new SolidColorBrush(Hud.Hairline);
+        box.BorderThickness = new Thickness(1);
+        box.FontFamily = new FontFamily(Hud.Mono);
+        box.FontSize = 12.5;
+        box.Height = height;
+        box.Padding = new Thickness(9, 7, 9, 7);
+    }
+
+    private TextBlock Link(string label, Action act)
+    {
+        var block = Hud.Text(label, Hud.Cyan, 12);
+        block.Margin = new Thickness(0, 0, 16, 0);
+        block.Cursor = Cursors.Hand;
+        block.Tag = "click";
+        block.MouseLeftButtonUp += (_, _) => act();
+        block.MouseEnter += (_, _) => block.Foreground = Hud.Brush(Hud.Ink);
+        block.MouseLeave += (_, _) => block.Foreground = Hud.Brush(Hud.Cyan);
+        return block;
+    }
+
+    /// <summary>Индекс -1 — новый сценарий, -2 — правка закрыта.</summary>
+    private void OpenEditor(int index)
+    {
+        _editing = index >= 0 && index < cfg.Scenarios.Length ? index : -1;
+        var scenario = _editing < 0 ? null : cfg.Scenarios[_editing];
+        _scenarioCaption.Text = scenario is null ? "НОВЫЙ СЦЕНАРИЙ" : $"ПРАВКА: {scenario.Name.ToUpperInvariant()}";
+        _scenarioName.Text = scenario?.Name ?? string.Empty;
+        _scenarioSteps.Text = string.Join("\n", scenario?.Steps ?? []);
+        _scenarioHint.Text = string.Empty;
+        _scenarioEditor.Visibility = Visibility.Visible;
+        _scenarioName.Focus();
+        _scenarioName.Select(_scenarioName.Text.Length, 0);
+    }
+
+    private void CloseEditor()
+    {
+        _editing = -2;
+        _scenarioEditor.Visibility = Visibility.Collapsed;
+    }
+
+    private void SaveEditor()
+    {
+        var name = _scenarioName.Text.Trim().ToLowerInvariant();
+        var steps = _scenarioSteps.Text.Split('\n').Select(step => step.Trim()).Where(step => step.Length > 0).ToArray();
+        if (name.Length == 0)
+        {
+            _scenarioHint.Text = "нужно название: по нему сценарий зовётся вслух";
+            return;
+        }
+
+        if (steps.Length == 0)
+        {
+            _scenarioHint.Text = "нужна хотя бы одна команда";
+            return;
+        }
+
+        var list = cfg.Scenarios.ToList();
+        if (_editing >= 0) list[_editing] = new Scenario { Name = name, Steps = steps };
+        else
+        {
+            var clash = list.FindIndex(s => s.Name.Trim().Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (clash >= 0)
+            {
+                _scenarioHint.Text = $"«{name}» уже есть — правьте его";
+                _scenarioSelected = clash;
+                OpenEditor(clash);
+                return;
+            }
+
+            list.Add(new Scenario { Name = name, Steps = steps });
+        }
+
+        cfg.Scenarios = list.ToArray();
+        cfg.Save();
+        _scenarioSelected = _editing < 0 ? list.Count - 1 : _editing;
+        CloseEditor();
+        RenderScenarios();
+    }
+
+    private void DeleteScenario(int index)
+    {
+        if (index < 0 || index >= cfg.Scenarios.Length)
+        {
+            Append("[сценарий] удалять нечего: список пуст");
+            return;
+        }
+
+        var name = cfg.Scenarios[index].Name;
+        var list = cfg.Scenarios.ToList();
+        list.RemoveAt(index);
+        cfg.Scenarios = list.ToArray();
+        cfg.Save();
+        if (_editing == index) CloseEditor();
+        else if (_editing > index) _editing--;
+        _scenarioSelected = Math.Clamp(index, 0, Math.Max(0, cfg.Scenarios.Length - 1));
+        RenderScenarios();
+        Append($"[сценарий] «{name}» удалён, в jarvis.json он больше не значится");
     }
 
     private void RenderScenarios()
@@ -541,7 +744,7 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         }
 
         if (cfg.Scenarios.Length == 0)
-            _scenarioRows.Children.Add(Hud.Text("сценариев нет — допишите их в jarvis.json", Hud.Dim, 12.5));
+            _scenarioRows.Children.Add(Hud.Text("сценариев нет — нажмите «+ новый» и напишите команды", Hud.Dim, 12.5));
     }
 
     private void RunScenario(Scenario scenario)

@@ -344,7 +344,7 @@ internal sealed class Commands(Voice voice, Config cfg)
         var scenario = Scenarios.Find(cfg.Scenarios, text);
         if (scenario is null)
             return Reply(cfg.Scenarios.Length == 0
-                ? "Сценариев нет. Допишите их в jarvis.json."
+                ? "Сценариев нет. Добавьте их на вкладке «Сценарии»."
                 : $"Такого сценария нет. Есть: {string.Join(", ", cfg.Scenarios.Select(s => s.Name))}.");
 
         var spokeBefore = SpeakReplies;
