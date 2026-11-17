@@ -1,30 +1,28 @@
 namespace Jarvis;
 
 /// <summary>Обработка голоса Piper, чтобы помощник звучал как бортовой ИИ, а не как человек,
-/// читающий текст: тон чуть ниже, речь размереннее, появляются комнатный хвост, металлический
-/// двойник и ровная громкость. Это стилизация обычными фильтрами над свободной моделью голоса —
-/// никакие записи актёра не разбираются и не копируются.</summary>
+/// читающий текст: тон чуть ниже, речь размереннее, появляются далёкий комнатный отзвук и ровная
+/// громкость. Это стилизация обычными фильтрами над свободной моделью голоса — никакие записи
+/// актёра не разбираются и не копируются.</summary>
 internal sealed class VoiceFx
 {
     private readonly double _semitones;
     private readonly double _wet;
-    private readonly double _shine;
     private readonly double _warmth;
     private readonly double _glass;
 
-    private VoiceFx(bool enabled, string name, double semitones, double wet, double shine, double warmth, double glass)
+    private VoiceFx(bool enabled, string name, double semitones, double wet, double warmth, double glass)
     {
         Enabled = enabled;
         Name = name;
         _semitones = semitones;
         _wet = wet;
-        _shine = shine;
         _warmth = warmth;
         _glass = glass;
     }
 
-    private static readonly VoiceFx JarvisPreset = new(true, "jarvis", -1.8, 0.14, 0.18, 4.0, 7.0);
-    private static readonly VoiceFx OffPreset = new(false, "off", 0, 0, 0, 0, 0);
+    private static readonly VoiceFx JarvisPreset = new(true, "jarvis", -1.8, 0.08, 4.0, 7.0);
+    private static readonly VoiceFx OffPreset = new(false, "off", 0, 0, 0, 0);
 
     public bool Enabled { get; }
     public string Name { get; }
@@ -50,7 +48,6 @@ internal sealed class VoiceFx
         var target = Rms(pcm);
         var work = ToDoubles(Stretch(pcm, Pitch));
         Equalize(work, sampleRate, _warmth, _glass);
-        if (_shine > 0) Chorus(work, sampleRate, 0.0125, 0.004, 0.7, _shine);
         if (_wet > 0) Tail(work, sampleRate, _wet);
         Level(work, target);
         return ToShorts(work);
@@ -183,12 +180,14 @@ internal sealed class VoiceFx
         return output;
     }
 
-    /// <summary>Комнатный хвост Шредера: четыре гаснущие гребёнки и два фазовращателя. Хвост
-    /// короткий — на длинном помощник звучит как в ванной и глотает согласные.</summary>
+    /// <summary>Далёкие отражения Шредера: четыре гаснущие гребёнки и два фазовращателя. Задержки
+    /// взяты дольше 35 мс именно потому, что короткие гребёнки работают как гребенчатый фильтр:
+    /// они подмазывают взрывные согласные, и из-за этого «р» начинает слышиться как «л».</summary>
     private static void Tail(double[] work, int rate, double mix)
     {
+        var combs = new[] { 0.0371, 0.0411, 0.0437, 0.0479 };
         var wet = new double[work.Length];
-        foreach (var seconds in new[] { 0.0187, 0.0241, 0.0299, 0.0349 })
+        foreach (var seconds in combs)
         {
             var delay = Math.Max(2, (int)(seconds * rate));
             var buffer = new double[delay];
@@ -198,20 +197,21 @@ internal sealed class VoiceFx
             {
                 var echo = buffer[at];
                 damped = echo * 0.4 + damped * 0.6;
-                buffer[at] = work[i] + 0.55 * damped;
+                buffer[at] = work[i] + 0.42 * damped;
                 wet[i] += echo;
                 at = (at + 1) % delay;
             }
         }
 
+        for (var i = 0; i < work.Length; i++) wet[i] /= combs.Length;
         Allpass(wet, rate, 0.005, 0.5);
         Allpass(wet, rate, 0.0017, 0.5);
 
-        var pre = Math.Max(1, (int)(0.006 * rate));
+        var pre = Math.Max(1, (int)(0.018 * rate));
         for (var i = work.Length - 1; i >= 0; i--)
         {
             var source = i - pre;
-            work[i] = work[i] * (1 - mix) + (source >= 0 ? wet[source] / 4 : 0) * mix;
+            work[i] = work[i] * (1 - mix) + (source >= 0 ? wet[source] : 0) * mix;
         }
     }
 
@@ -227,21 +227,6 @@ internal sealed class VoiceFx
             buffer[at] = work[i] + gain * result;
             work[i] = result;
             at = (at + 1) % delay;
-        }
-    }
-
-    /// <summary>Удвоение голоса плывущей задержкой: отсюда слышно, что говорит не комната, а
-    /// динамик бортовой системы.</summary>
-    private static void Chorus(double[] work, int rate, double baseSeconds, double depthSeconds, double hz, double mix)
-    {
-        var input = (double[])work.Clone();
-        for (var i = 0; i < work.Length; i++)
-        {
-            var at = i - (baseSeconds + depthSeconds * Math.Sin(2 * Math.PI * hz * i / rate)) * rate;
-            var whole = (int)Math.Floor(at);
-            if (whole < 1 || whole + 1 >= input.Length) continue;
-            var t = at - whole;
-            work[i] = (input[i] + mix * (input[whole] * (1 - t) + input[whole + 1] * t)) / (1 + mix);
         }
     }
 }
