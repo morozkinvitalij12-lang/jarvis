@@ -157,6 +157,54 @@ internal static class WinCtl
         PostMessageW(hWnd, WmKeyup, virtualKey, (nint)(long)(down | 0xc000_0000));
     }
 
+    /// <summary>Ctrl+V активному окну. Здесь без SendInput не обойтись: браузер читает
+    /// физическое состояние Ctrl, а PostMessage с модификатором страницу не вставляет.
+    /// Вызывается только тогда, когда на переднем плане уже нужная страница.</summary>
+    public static void PasteToForeground()
+    {
+        if (Guard.DryRun) return;
+        var keys = new[]
+        {
+            new Key(VkControl, 0x1d, 0),
+            new Key(VkV, 0x2f, 0),
+            new Key(VkV, 0x2f, Keyup),
+            new Key(VkControl, 0x1d, Keyup),
+        };
+        var sent = SendInput((uint)keys.Length, keys, Marshal.SizeOf<Key>());
+        if (sent != keys.Length) Log.Line($"вставка: SendInput принял {sent} из {keys.Length} нажатий, ошибка {Marshal.GetLastWin32Error()}");
+    }
+
+    /// <summary>INPUT для клавиатуры. Поле union занимает мышь (она крупнее), поэтому структура
+    /// дополнена пустыми байтами: без них SendInput отбраковывает размер и не вставляет ничего.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Key
+    {
+        public uint Type;
+        public uint Padding;
+        public uint VirtualKey;
+        public uint Scan;
+        public uint Flags;
+        public uint Time;
+        public nint ExtraInfo;
+        private readonly ulong unionTail;
+
+        public Key(uint virtualKey, uint scan, uint flags) : this()
+        {
+            Type = InputKeyboard;
+            VirtualKey = virtualKey;
+            Scan = scan;
+            Flags = flags;
+        }
+    }
+
+    private const uint InputKeyboard = 1;
+    private const uint Keyup = 0x0002;
+    private const uint VkControl = 0x11;
+    private const uint VkV = 0x56;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, Key[] inputs, int size);
+
     public static bool Launch(string command)
     {
         if (Guard.DryRun) return true;

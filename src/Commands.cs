@@ -381,8 +381,8 @@ internal sealed class Commands(Voice voice, Config cfg)
             voice.Say("Секунду, снимаю экран.");
             var shot = ScreenTranslate.ToYandex();
             return shot.Error is null
-                ? Reply("Снимок экрана в буфере обмена. В Яндекс Переводчике откройте вкладку «Картинка» и вставьте его по Ctrl+V.")
-                : Reply($"Экран не снят: {shot.Error}.");
+                ? Reply("Кадр вставлен в Яндекс Переводчик.")
+                : Reply($"Яндекс Переводчик открыт, но сам не вставился: {shot.Error}. Снимок лежит в буфере обмена — Ctrl+V.");
         }
 
         if (Guard.DryRun) return Reply("Читаю экран и перевожу его.");

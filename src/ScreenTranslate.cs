@@ -81,8 +81,7 @@ internal static class ScreenTranslate
     private const string YandexUrl = "https://translate.yandex.ru/";
 
     /// <summary>Кадр отдаётся Яндекс Переводчику: он сам распознаёт и переводит картинки, поэтому
-    /// здесь только снимок, буфер обмена и открытая страница. Клавиши помощник не отправляет —
-    /// вставку делает человек, иначе лез бы в чужое окно.</summary>
+    /// здесь только снимок, буфер обмена, открытая страница и вставка в неё.</summary>
     public static Outcome ToYandex()
     {
         try
@@ -104,13 +103,33 @@ internal static class ScreenTranslate
             }
 
             WinCtl.OpenUrl(YandexUrl);
-            return new Outcome(null, string.Empty, "yandex", 1, null);
+            return PasteIntoYandex()
+                ? new Outcome(null, string.Empty, "yandex", 1, null)
+                : new Outcome(null, string.Empty, "yandex", 0, "страница переводчика не вышла на передний план");
         }
         catch (Exception e)
         {
             Log.Line($"экран для яндекса: {e}");
             return new Outcome(null, string.Empty, "yandex", 0, e.Message);
         }
+    }
+
+    /// <summary>Ctrl+V уходит только той вкладке, которую открыл помощник: ждём, пока страница
+    /// переводчика станет активной, и клавиши шлём ей. Не дождались — не шлём ничего, иначе
+    /// вставка прилетела бы в игру или в чужое окно, а кадр остаётся в буфере обмена.</summary>
+    private static bool PasteIntoYandex()
+    {
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            Thread.Sleep(250);
+            if (WinCtl.Foreground() is not { } window) continue;
+            var title = window.Title.ToLowerInvariant();
+            if (!title.Contains("яндекс") && !title.Contains("перевод") && !title.Contains("translate")) continue;
+            WinCtl.PasteToForeground();
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Буфер обмена требует STA-поток: поток ассистента — MTA, и оттуда он не отдаётся.</summary>
