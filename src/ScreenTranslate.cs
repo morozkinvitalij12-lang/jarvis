@@ -78,6 +78,68 @@ internal static class ScreenTranslate
         }
     }
 
+    private const string YandexUrl = "https://translate.yandex.ru/";
+
+    /// <summary>Кадр отдаётся Яндекс Переводчику: он сам распознаёт и переводит картинки, поэтому
+    /// здесь только снимок, буфер обмена и открытая страница. Клавиши помощник не отправляет —
+    /// вставку делает человек, иначе лез бы в чужое окно.</summary>
+    public static Outcome ToYandex()
+    {
+        try
+        {
+            ScreenOverlay.Close();
+
+            var bounds = CaptureBounds();
+            var scale = Math.Min(1.0, (double)OcrEngine.MaxImageDimension / Math.Max(bounds.Width, bounds.Height));
+            var photo = Capture(bounds, scale);
+            if (photo is null) return new Outcome(null, string.Empty, "yandex", 0, "не удалось захватить экран");
+
+            try
+            {
+                CopyToClipboard(photo);
+            }
+            finally
+            {
+                photo.Dispose();
+            }
+
+            WinCtl.OpenUrl(YandexUrl);
+            return new Outcome(null, string.Empty, "yandex", 1, null);
+        }
+        catch (Exception e)
+        {
+            Log.Line($"экран для яндекса: {e}");
+            return new Outcome(null, string.Empty, "yandex", 0, e.Message);
+        }
+    }
+
+    /// <summary>Буфер обмена требует STA-поток: поток ассистента — MTA, и оттуда он не отдаётся.</summary>
+    private static void CopyToClipboard(Bitmap photo)
+    {
+        Exception? failure = null;
+        using var done = new ManualResetEventSlim();
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                WinForms.Clipboard.SetImage(photo);
+            }
+            catch (Exception e)
+            {
+                failure = e;
+            }
+            finally
+            {
+                done.Set();
+            }
+        })
+        { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!done.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("буфер обмена не ответил");
+        if (failure is not null) throw failure;
+    }
+
     private static async Task<Outcome> TranslateLines(Bitmap photo)
     {
         if (OcrEngine.AvailableRecognizerLanguages.Count == 0)
@@ -96,9 +158,11 @@ internal static class ScreenTranslate
         var target = TargetFor(lines);
         var taken = Math.Min(lines.Count, MaxLines);
         var done = new string?[taken];
+        // Направление берёт каждая строка по своему алфавиту: у русской статьи рядом лежит
+        // англоязычная аннотация, и один язык на весь экран оставлял её нетронутой.
         Parallel.For(0, taken,
             new ParallelOptions { MaxDegreeOfParallelism = Math.Min(8, taken) },
-            i => done[i] = Translate.Line(lines[i].Text, target));
+            i => done[i] = Translate.Line(lines[i].Text, IsCyrillic(lines[i].Text) ? "en" : "ru"));
 
         var burned = new List<(Rectangle, string)>();
         var spoken = new StringBuilder();
@@ -138,8 +202,8 @@ internal static class ScreenTranslate
             .ToArray();
     }
 
-    /// <summary>Направление выбирается по алфавиту самого экрана: английскую страницу читаем
-    /// на русский, русскую — на английский. Отдельной просьбы «на такой-то язык» тут нет.</summary>
+    /// <summary>Направление большинства экрана — оно нужно только для устного ответа
+    /// («перевод на русский»). Сами строки переводятся каждая в свою сторону.</summary>
     private static string TargetFor(List<Line> lines)
     {
         var russian = lines.Count(l => IsCyrillic(l.Text));

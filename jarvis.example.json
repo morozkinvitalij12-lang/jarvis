@@ -22,6 +22,7 @@
   "volume": 100,
   "commandTimeoutSeconds": 12,
   "partialTimeoutSeconds": 2,
+  "screenTranslator": "local",
   "dictationDir": "",
   "greeting": "Системы запущены. Слушаю вас.",
   "weatherCity": "Москва",

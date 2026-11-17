@@ -179,6 +179,17 @@ internal static class Program
     /// только без озвучки. Показывает, стоит ли в Windows OCR-пакет нужного языка и отвечает ли переводчик.</summary>
     private static int ScreenMode(string[] args)
     {
+        // `--screen yandex` — тот же снимок, но отдаётся Яндекс Переводчику: кадр в буфер
+        // обмена и открытая страница, без распознавания и вписки.
+        if (args.Length > 1 && args[1].Equals("yandex", StringComparison.OrdinalIgnoreCase))
+        {
+            var shot = ScreenTranslate.ToYandex();
+            Console.WriteLine(shot.Error is null
+                ? "кадр в буфере обмена, страница Яндекс Переводчика открыта"
+                : $"экран не снят: {shot.Error}");
+            return shot.Error is null ? 0 : 1;
+        }
+
         Console.WriteLine($"OCR-пакеты: {ScreenTranslate.Engines()}");
         var watch = Stopwatch.StartNew();
         var result = ScreenTranslate.Run();
@@ -608,6 +619,7 @@ internal static class Program
             Jarvis.exe --course [валюта]    курсы Центробанка
             Jarvis.exe --translate "текст"  перевод
             Jarvis.exe --screen [файл.png]  распознать и перевести текст с экрана
+            Jarvis.exe --screen yandex      снять экран в буфер обмена и открыть Яндекс Переводчик
             Jarvis.exe --ocr файл.png [перевод.png] распознать картинку, вторым адресом — перевести и вписать
             Jarvis.exe --calc "пример"      калькулятор, числа можно словами
             Jarvis.exe --scenario           список сценариев из jarvis.json

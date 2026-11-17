@@ -31,6 +31,7 @@ public sealed class Config
     [JsonPropertyName("volume")] public int Volume { get; set; } = 100;
     [JsonPropertyName("commandTimeoutSeconds")] public int CommandTimeoutSeconds { get; set; } = 12;
     [JsonPropertyName("partialTimeoutSeconds")] public int PartialTimeoutSeconds { get; set; } = 2;
+    [JsonPropertyName("screenTranslator")] public string ScreenTranslator { get; set; } = "local";
     [JsonPropertyName("dictationDir")] public string DictationDir { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Jarvis");
     [JsonPropertyName("greeting")] public string Greeting { get; set; } = "Системы запущены. Слушаю вас.";
@@ -51,6 +52,7 @@ public sealed class Config
     [JsonIgnore] public string ModelPath => Path.IsPathRooted(ModelDir) ? ModelDir : Path.Combine(Root, ModelDir);
     [JsonIgnore] public string ConfigPath => Path.Combine(Root, "jarvis.json");
     [JsonIgnore] public bool NeuralTts => !TtsBackend.Equals("sapi", StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public bool YandexScreen => ScreenTranslator.Equals("yandex", StringComparison.OrdinalIgnoreCase);
     [JsonIgnore] public string PiperVoicesPath => Resolve(PiperVoicesDir);
     [JsonIgnore] public string EspeakDataPath => Resolve(EspeakDataDir);
     [JsonIgnore] public string NeuralAsrPath => Resolve(NeuralAsrDir);

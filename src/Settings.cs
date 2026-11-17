@@ -160,6 +160,19 @@ internal static class Settings
             },
             new()
             {
+                Tile = "Я",
+                TileColor = Hud.CyanDeep,
+                Title = "Переводчик экрана",
+                Subtitle = "своим распознавателем или кадром в Яндекс Переводчике · Enter — переключить",
+                Hint = cfg.YandexScreen ? "Яндекс" : "локальный",
+                Act = () =>
+                {
+                    cfg.ScreenTranslator = cfg.YandexScreen ? "local" : "yandex";
+                    cfg.Save();
+                }
+            },
+            new()
+            {
                 Tile = "П",
                 TileColor = Hud.Dim,
                 Title = "Проверить микрофон",
