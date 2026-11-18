@@ -290,10 +290,12 @@ internal sealed class Assistant(Config cfg)
         {
             Console.WriteLine($"[мозг] команда нейросети: {action}");
             var reply = commands.Execute(action);
+            // Пустой ответ — это выключенная озвучка («замолчи»); печатать и говорить нечего.
+            if (reply.Length == 0) continue;
             Console.WriteLine($"JARVIS: {reply}");
-            // Команда из списка, которую разбор всё же не понял (или не нашёл программу),
+            // Команда из списка, которую разбор всё же не понял (или не нашёл программы),
             // озвучивается отсюда: без этого остаётся только обещание нейросети.
-            if (!commands.Understood && reply.Length > 0) voice.Say(reply);
+            if (!commands.Understood) voice.Say(reply);
         }
 
         return true;
