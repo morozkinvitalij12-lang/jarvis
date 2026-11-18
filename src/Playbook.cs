@@ -64,6 +64,69 @@ internal static class Playbook
         new("сценарий", "<имя>", "сценарии"),
     ];
 
+    /// <summary>Мелкая модель пересказывает команду своими словами: вместо «открой» пишет
+    /// «открыть» или «запусти», вместо «тише» — «убавь звук». Разбор фраз все эти синонимы
+    /// понимает, поэтому список сверяется не по букве глагола, а по действию: фразу сначала
+    /// приводим к канонической форме. Порядок важен — сначала фразы целиком, потом одиночные
+    /// глаголы, иначе «включить музыку» уехало бы в «открой музыку».</summary>
+    private static readonly (string From, string To)[] Spelling =
+    [
+        ("запустить музыку", "продолжи музыку"),
+        ("включить музыку", "продолжи музыку"),
+        ("запусти музыку", "продолжи музыку"),
+        ("включи музыку", "продолжи музыку"),
+        ("играть музыку", "продолжи музыку"),
+        ("остановить музыку", "стоп музыка"),
+        ("останови музыку", "стоп музыка"),
+        ("поставить на паузу", "пауза"),
+        ("поставь на паузу", "пауза"),
+        ("закрыть все окна", "закрой все окна"),
+        // Сценарий — не окно: иначе «запустить сценарий утро» стало бы «открой сценарий утро»,
+        // а этот разбор читает «сценарий» в любом месте фразы и ушёл бы в чужую ветку.
+        ("запустить сценарий", "сценарий"),
+        ("запусти сценарий", "сценарий"),
+        ("открыть сценарий", "сценарий"),
+        ("открой сценарий", "сценарий"),
+        ("включить сценарий", "сценарий"),
+        ("включи сценарий", "сценарий"),
+        ("убавить громкость", "тише"),
+        ("убавь громкость", "тише"),
+        ("уменьшить громкость", "тише"),
+        ("увеличить громкость", "громче"),
+        ("прибавить громкость", "громче"),
+        ("прибавь громкость", "громче"),
+        ("увеличить звук", "громче"),
+        ("прибавить звук", "громче"),
+        ("убавить звук", "тише"),
+        ("убавь звук", "тише"),
+        ("уменьшить звук", "тише"),
+        ("выключить звук", "звук отключи"),
+        ("отключить звук", "звук отключи"),
+        ("отключи звук", "звук отключи"),
+        ("включить звук", "звук включи"),
+        ("включи звук", "звук включи"),
+        ("вернуть звук", "звук включи"),
+        ("какие окна открыты", "что открыто"),
+        ("сколько времени", "который час"),
+        ("какой сегодня день", "какое сегодня число"),
+        ("минимизировать", "сверни"),
+        ("восстановить звук", "звук включи"),
+        ("восстановить", "разверни"),
+        ("запустить", "открой"),
+        ("запусти", "открой"),
+        ("включить", "открой"),
+        ("включи", "открой"),
+        ("открыть", "открой"),
+        ("закрыть", "закрой"),
+        ("свернуть", "сверни"),
+        ("развернуть", "разверни"),
+        ("перемотать", "перемотай"),
+        ("погуглить", "найди"),
+        ("найти", "найди"),
+        ("перевести", "переведи"),
+        ("вычислить", "посчитай"),
+    ];
+
     /// <summary>Системное сообщение модели: правила речи, формат ответа и весь список команд.</summary>
     public static string Instruction { get; } = Build();
 
@@ -79,14 +142,17 @@ internal static class Playbook
         $@"^[а-яa-z0-9][а-яa-z0-9 \-.]{{0,{MaxArgumentChars - 1}}}$", RegexOptions.IgnoreCase);
 
     /// <summary>Разбор ответа модели. Пустой массив команд — «только ответить». Если модель
-    /// проигнорировала формат и выдала обычную прозу, весь текст уходит в реплику.</summary>
-    public static (string Say, string[] Do) Parse(string raw)
+    /// проигнорировала формат и выдала обычную прозу, весь текст уходит в реплику.
+    /// Refused — первое предложенное действие, которого в списке нет: проглотить его молча
+    /// нельзя, человек уже слышит обещание из «Скажи:».</summary>
+    public static (string Say, string[] Do, string Refused) Parse(string raw)
     {
         var parts = Marker.Split(raw);
-        if (parts.Length < 3) return (Clean(raw), []);
+        if (parts.Length < 3) return (Clean(raw), [], string.Empty);
 
         var said = new StringBuilder();
         var done = new List<string>();
+        var refused = string.Empty;
         // Split чередует тело и метку: [преамбула, метка, тело, метка, тело, …]
         for (var i = 1; i + 1 < parts.Length; i += 2)
         {
@@ -99,29 +165,75 @@ internal static class Playbook
                 continue;
             }
 
-            var command = Commands.Normalize(body);
+            var command = Canonical(Commands.Normalize(body));
             if (IsAllowed(command))
             {
                 if (done.Count < MaxActions && !done.Contains(command)) done.Add(command);
             }
             else
             {
+                if (refused.Length == 0) refused = Brief(command);
                 Log.Line($"нейросеть предложила команду вне списка: {body}");
             }
         }
 
-        return (said.ToString(), [.. done]);
+        return (said.ToString(), [.. done], refused);
     }
 
+    /// <summary>Фраза с синонимом глагола в начале — в канонической форме списка; без него —
+    /// как пришла.</summary>
+    public static string Canonical(string normalized)
+    {
+        foreach (var (from, to) in Spelling)
+        {
+            if (!StartsWord(normalized, from)) continue;
+            var rest = normalized[from.Length..].Trim();
+            return rest.Length == 0 ? to : $"{to} {rest}";
+        }
+
+        return normalized;
+    }
+
+    private static bool StartsWord(string text, string words) =>
+        text.StartsWith(words, StringComparison.Ordinal) &&
+        (text.Length == words.Length || text[words.Length] == ' ');
+
+    /// <summary>Слова, на которые разбор фраз реагирует раньше всего остального: «выход» выключает
+    /// помощника, «спи» отправляет в ожидание, «повтори» и «озвучку» перебивают речь. Разбор ищет
+    /// их подстрокой в любом месте фразы, поэтому они не должны встречаться и в аргументе: иначе
+    /// «найди выход из зависшей программы» выключил бы помощника вместо поиска, а «открой
+    /// расписание» отправил бы его спать. Список повторяет дословные проверки первых ветвей
+    /// Commands.Execute — не раньше и не строже, чем сам разбор.</summary>
+    private static readonly string[] Hijack =
+    [
+        "выход", "заверши работу", "отключись", "пока джарвис",
+        "режим ожидания", "спи", "засыпай", "ожидай",
+        "повтори", "замолчи", "прекрати говорить", "перестань говорить",
+        "говорите", "включи голос", "озвучку", "сценарий",
+    ];
+
+    /// <summary>Отклонённая фраза идёт в озвучку, поэтому остаётся короткой: галлюцинация на триста
+    /// знаков произносилась бы целиком.</summary>
+    private static string Brief(string text)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length <= 4 ? text : string.Join(' ', words[..4]);
+    }
+
+    private static bool Hijacked(string argument) =>
+        Hijack.Any(needle => argument.Contains(needle, StringComparison.Ordinal));
+
     /// <summary>Команда из списка и с безопасным аргументом. Иначе — нет: модель не получает
-    /// права запускать то, чего не попросил человек.</summary>
+    /// права запускать то, чего не попросил человек, и не может словом в аргументе попасть
+    /// в раннюю ветку разбора (выход, ожидание, озвучка).</summary>
     public static bool IsAllowed(string normalizedCommand)
     {
         foreach (var directive in Directives)
         {
             if (normalizedCommand == directive.Prefix) return !directive.NeedsArgument;
             if (!normalizedCommand.StartsWith(directive.Prefix + " ", StringComparison.Ordinal)) continue;
-            return ArgumentShape.IsMatch(normalizedCommand[(directive.Prefix.Length + 1)..].Trim());
+            var argument = normalizedCommand[(directive.Prefix.Length + 1)..].Trim();
+            return ArgumentShape.IsMatch(argument) && !Hijacked(argument);
         }
 
         return false;

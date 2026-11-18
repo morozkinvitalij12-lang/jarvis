@@ -269,7 +269,7 @@ internal sealed class Assistant(Config cfg)
             Console.WriteLine($"[мозг] вопрос: {question}");
             voice.Say(ThinkingCue);
         });
-        if (answer.Say.Length == 0 && answer.Do.Length == 0) return false;
+        if (answer.Say.Length == 0 && answer.Do.Length == 0 && answer.Refused.Length == 0) return false;
 
         if (answer.Say.Length > 0)
         {
@@ -278,12 +278,22 @@ internal sealed class Assistant(Config cfg)
             voice.Say(answer.Say);
         }
 
+        if (answer.Refused.Length > 0)
+        {
+            // Модель пообещала действие, которого нет в её списке. Молча его отбросить нельзя:
+            // в «Скажи:» помощник уже сказал, что сейчас это сделает.
+            Console.WriteLine($"[мозг] команда вне списка: {answer.Refused}");
+            voice.Say($"Такого я делать не умею: {answer.Refused}.");
+        }
+
         foreach (var action in answer.Do)
         {
             Console.WriteLine($"[мозг] команда нейросети: {action}");
             var reply = commands.Execute(action);
-            if (commands.Understood) Console.WriteLine($"JARVIS: {reply}");
-            else Console.WriteLine("JARVIS: нейросеть назвала команду, которую разбор не поднял.");
+            Console.WriteLine($"JARVIS: {reply}");
+            // Команда из списка, которую разбор всё же не понял (или не нашёл программу),
+            // озвучивается отсюда: без этого остаётся только обещание нейросети.
+            if (!commands.Understood && reply.Length > 0) voice.Say(reply);
         }
 
         return true;

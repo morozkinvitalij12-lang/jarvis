@@ -24,8 +24,9 @@ internal enum BrainStatus
 
 /// <summary>Что нейросеть ответила: реплика вслух и команды, которые помощник должен выполнить
 /// после неё. Команды уже проверены по списку <see cref="Playbook"/>, но исполняет их обычный
-/// разбор фраз — модель не получает доступа к системе напрямую.</summary>
-internal readonly record struct BrainReply(BrainStatus Status, string Say, string[] Do);
+/// разбор фраз — модель не получает доступа к системе напрямую. Последнее поле — предложенное
+/// действие вне списка: его помощник не делает и обязан назвать это вслух.</summary>
+internal readonly record struct BrainReply(BrainStatus Status, string Say, string[] Do, string Refused);
 
 /// <summary>Умные ответы: локальная нейросеть Qwen через Ollama — без облаков и без ключей.
 /// Подключается только там, где команды помощника не поняли фразу, и не роняет сессию:
@@ -46,7 +47,7 @@ internal static class Brain
     {
         var trimmed = question.Trim();
         if (!cfg.SmartAnswers || trimmed.Length == 0 || Guard.DryRun || DateTime.Now < _retryAfter)
-            return new(BrainStatus.Skipped, string.Empty, []);
+            return new(BrainStatus.Skipped, string.Empty, [], string.Empty);
 
         onAttempt?.Invoke();
         var payload = JsonSerializer.Serialize(new
@@ -67,9 +68,10 @@ internal static class Brain
         var attempt = await SendAsync(cfg, payload, cancel);
         if (attempt.Status == BrainStatus.Answered)
         {
-            var (say, actions) = Playbook.Parse(attempt.Text);
+            var (say, actions, refused) = Playbook.Parse(attempt.Text);
             var speech = ForSpeech(say);
-            if (speech.Length > 0 || actions.Length > 0) return new(BrainStatus.Answered, speech, actions);
+            if (speech.Length > 0 || actions.Length > 0 || refused.Length > 0)
+                return new(BrainStatus.Answered, speech, actions, refused);
             attempt = (BrainStatus.Failed, string.Empty);
         }
 
@@ -78,7 +80,7 @@ internal static class Brain
         _retryAfter = DateTime.Now + (attempt.Status == BrainStatus.TimedOut
             ? TimeSpan.FromSeconds(30)
             : TimeSpan.FromMinutes(2));
-        return new(attempt.Status, Phrase(attempt.Status, cfg), []);
+        return new(attempt.Status, Phrase(attempt.Status, cfg), [], string.Empty);
     }
 
     /// <summary>Модель отвечает markdown'ом с переносами и списками; синтезатор читает это
@@ -117,7 +119,8 @@ internal static class Brain
             var answer = await AskAsync(cfg, question, cancel);
             if (answer.Status == BrainStatus.Answered)
                 return $"ответ: {answer.Say}" +
-                       (answer.Do.Length > 0 ? $"\nсделает: {string.Join(" | ", answer.Do)}" : string.Empty);
+                       (answer.Do.Length > 0 ? $"\nсделает: {string.Join(" | ", answer.Do)}" : string.Empty) +
+                       (answer.Refused.Length > 0 ? $"\nотклонено: {answer.Refused}" : string.Empty);
             if (answer.Status == BrainStatus.Skipped)
                 return "умные ответы сейчас не спрашиваются: выключены в настройках, в jarvis.json нет smartAnswers, " +
                        "или недавно уже был сбой (повтор через пару минут)";
