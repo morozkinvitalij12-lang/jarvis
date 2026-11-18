@@ -22,9 +22,15 @@ internal enum BrainStatus
     Failed,
 }
 
+/// <summary>Что нейросеть ответила: реплика вслух и команды, которые помощник должен выполнить
+/// после неё. Команды уже проверены по списку <see cref="Playbook"/>, но исполняет их обычный
+/// разбор фраз — модель не получает доступа к системе напрямую.</summary>
+internal readonly record struct BrainReply(BrainStatus Status, string Say, string[] Do);
+
 /// <summary>Умные ответы: локальная нейросеть Qwen через Ollama — без облаков и без ключей.
 /// Подключается только там, где команды помощника не поняли фразу, и не роняет сессию:
-/// вместо этого вежливое сообщение в стиле Джарвиса и запись в журнал.</summary>
+/// вместо этого вежливое сообщение в стиле Джарвиса и запись в журнал. Ответ модели — не только
+/// реплика вслух, но и указание помощнику, что сделать (см. <see cref="Playbook"/>).</summary>
 internal static class Brain
 {
     private const int MaxSpeechChars = 420;
@@ -35,20 +41,12 @@ internal static class Brain
     /// помощник тормозит и повторяет одно и то же.</summary>
     private static DateTime _retryAfter = DateTime.MinValue;
 
-    private const string Style = """
-        Ты русскоязычный помощник. Ты ОБЯЗАН отвечать ТОЛЬКО на русском языке.
-        Никакого китайского, английского или другого языка — даже если вопрос на другом языке.
-        Ответ: одно-два коротких предложения, простым разговорным текстом.
-        Без markdown, без списков, без эмодзи и без звёздочек — ответ будут произносить вслух.
-        Если не знаешь ответ, честно скажи об этом одним предложением на русском.
-        """;
-
-    public static async Task<(BrainStatus Status, string Reply)> AskAsync(Config cfg, string question,
+    public static async Task<BrainReply> AskAsync(Config cfg, string question,
         CancellationToken cancel = default, Action? onAttempt = null)
     {
         var trimmed = question.Trim();
         if (!cfg.SmartAnswers || trimmed.Length == 0 || Guard.DryRun || DateTime.Now < _retryAfter)
-            return (BrainStatus.Skipped, string.Empty);
+            return new(BrainStatus.Skipped, string.Empty, []);
 
         onAttempt?.Invoke();
         var payload = JsonSerializer.Serialize(new
@@ -61,20 +59,26 @@ internal static class Brain
             options = new { num_predict = 240, temperature = 0.6, num_ctx = 2048 },
             messages = new object[]
             {
-                new { role = "system", content = Style },
+                new { role = "system", content = Playbook.Instruction },
                 new { role = "user", content = trimmed },
             },
         });
 
-        var attempt = await SendAsync(cfg, "/api/chat", payload, cancel);
-        if (attempt.Status == BrainStatus.Answered) return (BrainStatus.Answered, attempt.Text);
+        var attempt = await SendAsync(cfg, payload, cancel);
+        if (attempt.Status == BrainStatus.Answered)
+        {
+            var (say, actions) = Playbook.Parse(attempt.Text);
+            var speech = ForSpeech(say);
+            if (speech.Length > 0 || actions.Length > 0) return new(BrainStatus.Answered, speech, actions);
+            attempt = (BrainStatus.Failed, string.Empty);
+        }
 
         // Таймаут — это обычно «модель ещё грузится»: даём человеку попробовать снова,
         // но не раньше, чем через полминуты.
         _retryAfter = DateTime.Now + (attempt.Status == BrainStatus.TimedOut
             ? TimeSpan.FromSeconds(30)
             : TimeSpan.FromMinutes(2));
-        return (attempt.Status, Phrase(attempt.Status, cfg));
+        return new(attempt.Status, Phrase(attempt.Status, cfg), []);
     }
 
     /// <summary>Модель отвечает markdown'ом с переносами и списками; синтезатор читает это
@@ -104,25 +108,35 @@ internal static class Brain
         return cleaned.Length == 0 ? string.Empty : cleaned + ".";
     }
 
-    /// <summary>Разведка для «Jarvis.exe --brain»: жив ли сервис, та ли модель стоит.</summary>
+    /// <summary>Разведка для «Jarvis.exe --brain»: жив ли сервис, та ли модель стоит,
+    /// что именно помощник сообщает модели о своих командах.</summary>
     public static async Task<string> ReportAsync(Config cfg, string question, CancellationToken cancel = default)
     {
         if (question.Trim().Length > 0)
         {
             var answer = await AskAsync(cfg, question, cancel);
-            if (answer.Status == BrainStatus.Answered) return $"ответ: {answer.Reply}";
+            if (answer.Status == BrainStatus.Answered)
+                return $"ответ: {answer.Say}" +
+                       (answer.Do.Length > 0 ? $"\nсделает: {string.Join(" | ", answer.Do)}" : string.Empty);
             if (answer.Status == BrainStatus.Skipped)
                 return "умные ответы сейчас не спрашиваются: выключены в настройках, в jarvis.json нет smartAnswers, " +
                        "или недавно уже был сбой (повтор через пару минут)";
-            return $"{answer.Status}: {answer.Reply}";
+            return $"{answer.Status}: {answer.Say}";
         }
 
         var models = await GetTagsAsync(cfg, cancel);
-        if (models is null)
-            return $"Ollama по адресу {cfg.OllamaUrl} не отвечает.\n" +
-                   $"Установка: winget install Ollama.Ollama, затем в консоли: ollama pull {cfg.OllamaModel}\n" +
-                   $"Проверка: ollama list и {cfg.OllamaUrl}/api/tags в браузере.";
+        var sb = new StringBuilder(models is null
+            ? $"Ollama по адресу {cfg.OllamaUrl} не отвечает.\n" +
+              $"Установка: winget install Ollama.Ollama, затем в консоли: ollama pull {cfg.OllamaModel}\n" +
+              $"Проверка: ollama list и {cfg.OllamaUrl}/api/tags в браузере."
+            : ServiceReport(cfg, models));
+        sb.Append($"\n\nИнструкция и {Playbook.Directives.Length} команд, которые модель получает в начале сеанса:\n")
+          .Append(Playbook.Instruction);
+        return sb.ToString();
+    }
 
+    private static string ServiceReport(Config cfg, List<string> models)
+    {
         var has = models.Any(m => m.Contains(cfg.OllamaModel, StringComparison.OrdinalIgnoreCase));
         var sb = new StringBuilder($"Ollama отвечает на {cfg.OllamaUrl}. Моделей: {models.Count}");
         sb.Append(models.Count == 0 ? " (ни одной)" : ": " + string.Join(", ", models));
@@ -155,20 +169,23 @@ internal static class Brain
         }
     }
 
-    private static async Task<(BrainStatus Status, string Text)> SendAsync(Config cfg, string path,
+    /// <summary>Ответ возвращается как есть: сначала его разбирает <see cref="Playbook"/>,
+    /// и только реплику «Скажи:» чистим под озвучку. Иначе переносы и метки склеились бы
+    /// в одну строку, и команды найти было бы нельзя.</summary>
+    private static async Task<(BrainStatus Status, string Text)> SendAsync(Config cfg,
         string payload, CancellationToken cancel)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(cfg.BrainTimeoutSeconds, 3, 600)));
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, Url(cfg.OllamaUrl, path));
+            using var request = new HttpRequestMessage(HttpMethod.Post, Url(cfg.OllamaUrl, "/api/chat"));
             request.Headers.UserAgent.ParseAdd("Jarvis/1.0");
             request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
             using var response = await Http.SendAsync(request, timeout.Token);
             var body = await response.Content.ReadAsStringAsync(timeout.Token);
             if (!response.IsSuccessStatusCode) return (Classify(response.StatusCode, body), string.Empty);
-            var text = ForSpeech(Content(body));
+            var text = Content(body).Trim();
             return text.Length == 0 ? (BrainStatus.Failed, string.Empty) : (BrainStatus.Answered, text);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)

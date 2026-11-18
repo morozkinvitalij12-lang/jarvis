@@ -77,7 +77,7 @@ internal sealed class Assistant(Config cfg)
         // Распознаватели создаются один раз на сессию: поток микрофона держит в них нативные
         // указатели, поэтому пересоздавать их между фразами нельзя.
         using var free = model.CreateRecognizer(cfg.SampleRate);
-        var vocabulary = Vocabulary.For(cfg.WakeWords);
+        var vocabulary = Vocabulary.For(cfg);
         using var restricted = model.CreateGrammarRecognizer(cfg.SampleRate, vocabulary);
         var primary = restricted ?? free;
         var secondary = ReferenceEquals(primary, free) ? null : free;
@@ -106,6 +106,14 @@ internal sealed class Assistant(Config cfg)
         Console.WriteLine($"JARVIS: {cfg.Greeting} Скажите «{cfg.WakeWords[0]}»."
                           + (cfg.SmartAnswers ? $" Умные ответы: {cfg.OllamaModel} на {cfg.OllamaUrl}." : string.Empty));
         voice.Say(cfg.Greeting);
+
+        if (cfg.SmartAnswers)
+        {
+            // Начало сеанса: нейросеть получает этот текст вместе с каждым вопросом, а здесь он
+            // печатается, чтобы было видно, какие именно команды ей доступны.
+            Console.WriteLine($"JARVIS: инструкции и {Playbook.Directives.Length} команд переданы нейросети:");
+            Console.WriteLine(Playbook.Instruction);
+        }
 
         Running = true;
         var listening = true;
@@ -247,23 +255,37 @@ internal sealed class Assistant(Config cfg)
         voice.Say(answer);
     }
 
-    /// <summary>True — нейросеть ответила, и этот ответ уже стоит в очереди озвучки.</summary>
+    /// <summary>True — нейросеть ответила, и этот ответ уже стоит в очереди озвучки.
+    /// Вместе с ответом она могла указать помощнику действия: команды из её списка идут
+    /// через тот же разбор фраз, что и речь человека.</summary>
     private async Task<bool> AskBrain(string heard, Commands commands, Voice voice)
     {
         if (!cfg.SmartAnswers) return false;
         var question = TextMatch.StripWake(heard, cfg.WakeWords);
         if (question.Trim().Length == 0) return false;
 
-        var (status, reply) = await Brain.AskAsync(cfg, question, _cancel.Token, () =>
+        var answer = await Brain.AskAsync(cfg, question, _cancel.Token, () =>
         {
             Console.WriteLine($"[мозг] вопрос: {question}");
             voice.Say(ThinkingCue);
         });
-        if (reply.Length == 0) return false;
+        if (answer.Say.Length == 0 && answer.Do.Length == 0) return false;
 
-        commands.Remember(reply);
-        Console.WriteLine($"[мозг] {status}: {reply}");
-        voice.Say(reply);
+        if (answer.Say.Length > 0)
+        {
+            Console.WriteLine($"[мозг] {answer.Status}: {answer.Say}");
+            commands.Remember(answer.Say);
+            voice.Say(answer.Say);
+        }
+
+        foreach (var action in answer.Do)
+        {
+            Console.WriteLine($"[мозг] команда нейросети: {action}");
+            var reply = commands.Execute(action);
+            if (commands.Understood) Console.WriteLine($"JARVIS: {reply}");
+            else Console.WriteLine("JARVIS: нейросеть назвала команду, которую разбор не поднял.");
+        }
+
         return true;
     }
 
@@ -306,17 +328,20 @@ internal sealed class Assistant(Config cfg)
         => Settled(heard) ? Math.Min(cfg.PartialTimeoutSeconds * 1000L, FastQuietMs) : cfg.PartialTimeoutSeconds * 1000L;
 
     /// <summary>Команда собрана: отвечать можно сразу, полная пауза здесь ощущается как зависший помощник.</summary>
-    private static bool Settled(string heard)
+    private bool Settled(string heard)
     {
         var text = Commands.Normalize(heard);
-        if (Vocabulary.Score(text) >= 2) return true;
+        if (Vocabulary.Score(text, cfg) >= 2) return true;
         return text.Split(' ', StringSplitOptions.RemoveEmptyEntries) is [var only] && Vocabulary.Known(only);
     }
 
     private const long FastQuietMs = 1_100;
 
     /// <summary>Нейросетевая расшифровка всего окна звука точнее обеих словарных строк, но берём
-    /// её только когда командных слов в ней не меньше: модель слышит связно и путает междометия.</summary>
+    /// её только когда командных слов в ней не меньше: модель слышит связно и путает междометия.
+    /// Исключение — имя сценария: услышанное словарём целиком, оно перевешивает, потому что модель
+    /// на незнакомом названии достраивает общие слова («майнкрафт» → «мои экраны») и по своему
+    /// счету кажется полнее оригинала.</summary>
     private (string? Command, string Argument) MergeNeural(string? command, string argument,
         Listener listener, Task<GigaAm>? load, long sinceTick)
     {
@@ -327,10 +352,10 @@ internal sealed class Assistant(Config cfg)
         var text = Commands.Normalize(neural.Decode(Pcm.TrimSilence(listener.CaptureSince(sinceTick), cfg.SampleRate), cfg.SampleRate));
         if (text.Length == 0) return (command, argument);
 
-        var score = Vocabulary.Score(text);
-        var fromGrammar = command is null ? -1 : Vocabulary.Score(Commands.Normalize(command));
+        var score = Vocabulary.Score(text, cfg);
+        var fromGrammar = command is null ? -1 : Vocabulary.Score(Commands.Normalize(command), cfg);
         return (score >= fromGrammar ? text : command,
-            score >= Vocabulary.Score(Commands.Normalize(argument)) ? text : argument);
+            score >= Vocabulary.Score(Commands.Normalize(argument), cfg) ? text : argument);
     }
 
     /// <summary>Самый длинный черновик из двух потоков — по нему видно, говорит ли человек.</summary>

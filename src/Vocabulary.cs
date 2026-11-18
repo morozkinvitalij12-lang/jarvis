@@ -80,24 +80,48 @@ internal static class Vocabulary
     /// отвечать, не дожидаясь длинной паузы.</summary>
     public static bool Known(string word) => Set.Contains(word);
 
+    /// <summary>Слова, которых нет в общем словаре: имена сценариев этого пользователя. Их нельзя
+    /// внести в <see cref="Words"/> руками — тот список правится вместе с кодом, а сценарии человек
+    /// добавляет сам. Без них словарьный Vosk физически не может произнести «майнкрафт»: слова нет
+    /// в грамматике, и он выдаёт «сценарий мои».</summary>
+    public static string[] UserWords(Config cfg)
+    {
+        var kept = new List<string>();
+        foreach (var raw in cfg.WakeWords.Concat(cfg.Scenarios.Select(s => s.Name)))
+            foreach (var token in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var word = token.Trim().ToLowerInvariant().Replace('ё', 'е');
+                // Латиницу русская модель Vosk не печатает вовсе, а общие слова («кино») уже в Words:
+                // иначе одно и то же слово считалось бы в сверке дважды.
+                if (word.Length == 0 || !word.Any(IsRussian) || Set.Contains(word) || kept.Contains(word)) continue;
+                kept.Add(word);
+            }
+
+        return [.. kept];
+    }
+
     /// <summary>Сколько командных слов слышно в строке. Две расшифровки одного звука сравниваются
-    /// по ней: берётся та, где команда звучит полнее.</summary>
-    public static int Score(string text)
+    /// по ней: берётся та, где команда звучит полнее. Имя сценария весит вдвое больше общего слова:
+    /// свободная модель подставляет вместо незнакомого названия общие слова («майнкрафт» →
+    /// «мои экраны») и по простому счету казалась бы полнее оригинала.</summary>
+    public static int Score(string text, Config cfg)
     {
         if (text.Length == 0) return 0;
         var hits = 0;
         // Слова короче четырёх букв («год», «час») цепляются к концам чужих слов.
         foreach (var word in Words)
             if (word.Length >= 4 && text.Contains(word, StringComparison.Ordinal)) hits++;
+        foreach (var word in UserWords(cfg))
+            if (word.Length >= 4 && text.Contains(word, StringComparison.Ordinal)) hits += 2;
         return hits;
     }
 
     /// <summary>Русская модель Vosk не знает латинских названий («chrome», «spotify») и печатает
     /// предупреждение на каждое, поэтому в словарь идут только слова кириллицей.</summary>
-    public static IReadOnlyList<string> For(IEnumerable<string> wakeWords)
+    public static IReadOnlyList<string> For(Config cfg)
     {
         var kept = new List<string>();
-        foreach (var raw in wakeWords.Concat(Words))
+        foreach (var raw in cfg.WakeWords.Concat(Words).Concat(UserWords(cfg)))
         {
             var word = raw.Trim().ToLowerInvariant();
             if (word.Length == 0 || kept.Contains(word) || !word.Any(IsRussian)) continue;

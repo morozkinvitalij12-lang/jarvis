@@ -555,7 +555,7 @@ internal static class Program
     {
         if (Environment.GetEnvironmentVariable("JARVIS_FREE") != "1")
         {
-            var restricted = model.CreateGrammarRecognizer(cfg.SampleRate, Vocabulary.For(cfg.WakeWords));
+            var restricted = model.CreateGrammarRecognizer(cfg.SampleRate, Vocabulary.For(cfg));
             if (restricted is not null) return restricted;
             Console.WriteLine("[словарь] не поднялся, работаю свободной моделью");
         }
@@ -629,7 +629,8 @@ internal static class Program
             Jarvis.exe --calc "пример"      калькулятор, числа можно словами
             Jarvis.exe --scenario           список сценариев из jarvis.json
             Jarvis.exe --sites              сайты, которые помощник открывает по имени
-            Jarvis.exe --brain [вопрос]     проверка локальной нейросети (Ollama): адрес, модель, ответ
+            Jarvis.exe --brain [вопрос]     проверка локальной нейросети (Ollama): адрес, модель, ответ,
+                                            без вопроса — инструкция и команды, которые уходят модели
             Jarvis.exe --selftest           проверка модели, голоса и цепочки TTS→STT без микрофона
             Jarvis.exe --plan ["фраза" ...] сухой прогон маршрутизации команд (без действий и звука)
 

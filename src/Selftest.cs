@@ -85,7 +85,7 @@ internal static class Selftest
         Directory.CreateDirectory(temp);
 
         // Тот же набор распознавателей, что и у помощника: словарь команд + свободная модель.
-        var vocabulary = Vocabulary.For(cfg.WakeWords);
+        var vocabulary = Vocabulary.For(cfg);
         using var restricted = model.CreateGrammarRecognizer(cfg.SampleRate, vocabulary);
         using var free = model.CreateRecognizer(cfg.SampleRate);
         var recognizer = restricted ?? free;

@@ -1001,8 +1001,8 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         {
         }
 
-        _iconHandleLive = MakeIcon(Hud.Cyan, out _iconLive);
-        _iconHandlePaused = MakeIcon(Hud.Amber, out _iconPaused);
+        _iconHandleLive = MakeTrayIcon(false, out _iconLive);
+        _iconHandlePaused = MakeTrayIcon(true, out _iconPaused);
 
         var menu = new WinForms.ContextMenuStrip();
         var open = new WinForms.ToolStripMenuItem("Открыть окно");
@@ -1032,22 +1032,75 @@ internal sealed class Shell(Config cfg, Assistant? assistant, bool showWindow) :
         if (_pauseItem is not null) _pauseItem.Text = paused ? "Включить (F6)" : "Выключить (F6)";
     }
 
-    private nint MakeIcon(Color color, out Drawing.Icon icon)
+    /// <summary>Значок трея: та же эмблема, что и у exe. «Выключен» — эмблема приглушена и
+    /// обведена янтарным кольцом, так что состояние видно, даже не наводя курсор.</summary>
+    private static nint MakeTrayIcon(bool paused, out Drawing.Icon icon)
     {
         using var bitmap = new Drawing.Bitmap(32, 32);
         using (var graphics = Drawing.Graphics.FromImage(bitmap))
         {
             graphics.SmoothingMode = Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            graphics.InterpolationMode = Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
             graphics.Clear(Drawing.Color.Transparent);
-            using var ring = new Drawing.Pen(Drawing.Color.FromArgb(color.R, color.G, color.B), 2.4f);
-            graphics.DrawEllipse(ring, 5, 5, 22, 22);
-            using var core = new Drawing.SolidBrush(Drawing.Color.FromArgb(230, color.R, color.G, color.B));
-            graphics.FillEllipse(core, 13, 13, 6, 6);
+
+            var emblem = Emblem;
+            if (emblem is null)
+            {
+                // Без ассета остаётся процедурное кольцо: пустой значок трея выглядит сломанным.
+                var color = paused ? Hud.Amber : Hud.Cyan;
+                using var bare = new Drawing.Pen(Drawing.Color.FromArgb(color.R, color.G, color.B), 2.4f);
+                graphics.DrawEllipse(bare, 5, 5, 22, 22);
+                using var core = new Drawing.SolidBrush(Drawing.Color.FromArgb(230, color.R, color.G, color.B));
+                graphics.FillEllipse(core, 13, 13, 6, 6);
+            }
+            else
+            {
+                // Полупрозрачность вместо отдельного «тусклого» ассета: затемнение одним
+                // ColorMatrix'ом дешевле, чем второй PNG в ресурсах.
+                using var attrs = new Drawing.Imaging.ImageAttributes();
+                if (paused)
+                {
+                    attrs.SetColorMatrix(new Drawing.Imaging.ColorMatrix { Matrix33 = 0.45f });
+                    graphics.DrawImage(emblem, new Drawing.Rectangle(4, 4, 24, 24),
+                        0, 0, emblem.Width, emblem.Height, Drawing.GraphicsUnit.Pixel, attrs);
+                    using var off = new Drawing.Pen(Drawing.Color.FromArgb(Hud.Amber.R, Hud.Amber.G, Hud.Amber.B), 2f);
+                    graphics.DrawEllipse(off, 1, 1, 30, 30);
+                }
+                else
+                {
+                    graphics.DrawImage(emblem, new Drawing.Rectangle(1, 1, 30, 30),
+                        0, 0, emblem.Width, emblem.Height, Drawing.GraphicsUnit.Pixel, attrs);
+                }
+            }
         }
 
         var handle = bitmap.GetHicon();
         icon = Drawing.Icon.FromHandle(handle);
         return handle;
+    }
+
+    /// <summary>Эмблема из ресурсов сборки. Копия нужна потому, что GDI+ читает PNG из потока
+    /// лениво: без второго Bitmap поток пришлось бы держать открытым всё время работы трея.</summary>
+    private static Drawing.Bitmap? Emblem { get; } = LoadEmblem();
+
+    private static Drawing.Bitmap? LoadEmblem()
+    {
+        try
+        {
+            var asm = typeof(Shell).Assembly;
+            var name = Array.Find(asm.GetManifestResourceNames(),
+                n => n.EndsWith("jarvis.png", StringComparison.OrdinalIgnoreCase));
+            if (name is null) return null;
+
+            using var stream = asm.GetManifestResourceStream(name)!;
+            using var loaded = new Drawing.Bitmap(stream);
+            return new Drawing.Bitmap(loaded);
+        }
+        catch (Exception e)
+        {
+            Log.Line($"не удалось взять иконку из ресурсов: {e.Message}");
+            return null;
+        }
     }
 
     private IntPtr HotkeyHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

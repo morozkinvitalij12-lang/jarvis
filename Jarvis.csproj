@@ -11,6 +11,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Jarvis</AssemblyName>
     <RootNamespace>Jarvis</RootNamespace>
+    <!-- Иконка exe, панели задач и Alt+Tab: Windows берёт её из Win32-ресурса, кода на это не нужно -->
+    <ApplicationIcon>assets\jarvis.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <SatelliteResourceLanguages>ru;en</SatelliteResourceLanguages>
     <InvariantGlobalization>false</InvariantGlobalization>
@@ -39,6 +41,8 @@
 
   <ItemGroup>
     <None Include="native\**\*.dll" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Та же эмблема, что и в ICO, но одним маленьким кадром: из неё трей рисует свои значки. -->
+    <EmbeddedResource Include="assets\jarvis.png" />
   </ItemGroup>
 
 </Project>
